@@ -17,11 +17,14 @@ class RedisConnect(object):
     This makes the Simple Cache class a little more flexible, for cases
     where redis connection configuration needs customizing.
     """
-    def __init__(self, host=None, port=None, db=None, password=None):
+    def __init__(self, host=None, port=None, db=None, password=None, encoding='utf-8', decode_responses=True, encoding_errors='strict'):
         self.host = host if host else 'localhost'
         self.port = port if port else 6379
         self.db = db if db else 0
         self.password = password
+        self.encoding = encoding
+        self.decode_responses = decode_responses
+        self.encoding_errors = encoding_errors
 
     def connect(self):
         """
@@ -40,7 +43,10 @@ class RedisConnect(object):
         return redis.StrictRedis(host=self.host,
                                  port=self.port,
                                  db=self.db,
-                                 password=self.password)
+                                 password=self.password,
+                                 encoding=self.encoding,
+                                 decode_responses=self.decode_responses,
+                                 encoding_errors=self.encoding_errors)
 
 
 class CacheMissException(Exception):
@@ -76,7 +82,10 @@ class SimpleCache(object):
                  port=None,
                  db=None,
                  password=None,
-                 namespace="SimpleCache"):
+                 namespace="SimpleCache",
+                 charset='utf-8',
+                 decode_responses=True,
+                 encoding_errors='strict'):
 
         self.limit = limit  # No of json encoded strings to cache
         self.expire = expire  # Time to keys to expire in seconds
@@ -84,13 +93,17 @@ class SimpleCache(object):
         self.host = host
         self.port = port
         self.db = db
+        self.charset = charset
 
         try:
             self.connection = RedisConnect(host=self.host,
                                            port=self.port,
                                            db=self.db,
-                                           password=password).connect()
-        except RedisNoConnException, e:
+                                           password=password,
+                                           encoding=charset,
+                                           decode_responses=decode_responses,
+                                           encoding_errors=encoding_errors).connect()
+        except RedisNoConnException:
             self.connection = None
             pass
 
@@ -114,8 +127,7 @@ class SimpleCache(object):
         :param value: actual value being stored under this key
         :param expire: time-to-live (ttl) for this datum
         """
-        key = to_unicode(key)
-        value = to_unicode(value)
+        key = key.encode(self.charset)
         set_name = self.get_set_name()
 
         while self.connection.scard(set_name) >= self.limit:
@@ -198,7 +210,7 @@ class SimpleCache(object):
         self.store(key, pickle.dumps(value), expire)
 
     def get(self, key):
-        key = to_unicode(key)
+        key = key.encode(self.charset)
         if key:  # No need to validate membership, which is an O(1) operation, but seems we can do without.
             value = self.connection.get(self.make_key(key))
             if value is None:  # expired key
@@ -217,7 +229,7 @@ class SimpleCache(object):
         :return: dict of found key/values
         """
         if keys:
-            cache_keys = [self.make_key(to_unicode(key)) for key in keys]
+            cache_keys = [self.make_key(key.encode(self.charset)) for key in keys]
             values = self.connection.mget(cache_keys)
 
             if None in values:
@@ -253,7 +265,7 @@ class SimpleCache(object):
         Method removes (invalidates) an item from the cache.
         :param key: key to remove from Redis
         """
-        key = to_unicode(key)
+        key = key.encode(self.charset)
         pipe = self.connection.pipeline()
         pipe.srem(self.get_set_name(), key)
         pipe.delete(self.make_key(key))
@@ -365,7 +377,6 @@ def cache_it(limit=10000, expire=DEFAULT_EXPIRY, cache=None,
     return decorator
 
 
-
 def cache_it_json(limit=10000, expire=DEFAULT_EXPIRY, cache=None, namespace=None):
     """
     Arguments and function result must be able to convert to JSON.
@@ -376,10 +387,3 @@ def cache_it_json(limit=10000, expire=DEFAULT_EXPIRY, cache=None, namespace=None
     """
     return cache_it(limit=limit, expire=expire, use_json=True,
                     cache=cache, namespace=None)
-
-
-def to_unicode(obj, encoding='utf-8'):
-    if isinstance(obj, basestring):
-        if not isinstance(obj, unicode):
-            obj = unicode(obj, encoding)
-    return obj

@@ -1,7 +1,7 @@
 # SimpleCache Tests
 # ~~~~~~~~~~~~~~~~~~~
 from datetime import timedelta
-from rediscache import SimpleCache, RedisConnect, cache_it, cache_it_json, CacheMissException, ExpiredKeyException, DoNotCache
+from redis_cache.rediscache import SimpleCache, RedisConnect, cache_it, cache_it_json, CacheMissException, ExpiredKeyException, DoNotCache
 from unittest import TestCase, main
 import time
 
@@ -18,9 +18,10 @@ class ComplexNumber(object):  # used in pickle test
 class SimpleCacheTest(TestCase):
 
     def setUp(self):
-        self.c = SimpleCache(10)  # Cache that has a maximum limit of 10 keys
+        self.c = SimpleCache(10, decode_responses=True)  # Cache that has a maximum limit of 10 keys
         self.assertIsNotNone(self.c.connection)
         self.redis = RedisConnect().connect()
+
     def test_expire(self):
         quick_c = SimpleCache()
 
@@ -57,26 +58,6 @@ class SimpleCacheTest(TestCase):
         payload = {"example": "data"}
         self.c.store_json("json", payload)
         self.assertEqual(self.c.get_json("json"), payload)
-
-    def test_pickle(self):
-        payload = ComplexNumber(3,4)
-        self.c.store_pickle("pickle", payload)
-        self.assertEqual(self.c.get_pickle("pickle"), payload)
-
-    def test_decorator(self):
-        self.redis.flushall()
-        mutable = []
-        @cache_it(cache=self.c)
-        def append(n):
-            mutable.append(n)
-            return mutable
-        append(1)
-        len_before = len(mutable)
-        mutable_cached = append(1)
-        len_after = len(mutable)
-        self.assertEqual(len_before, len_after)
-        self.assertNotEqual(id(mutable), id(mutable_cached))
-        self.assertEqual(mutable, mutable_cached)
 
     def test_decorator_do_not_cache(self):
         @cache_it(cache=self.c)
@@ -297,4 +278,33 @@ class SimpleCacheTest(TestCase):
         self.c.flush()
 
 
-main()
+class SimpleCacheTestBinaryData(TestCase):
+
+    def setUp(self):
+        self.c = SimpleCache(10, decode_responses=False)  # Cache that has a maximum limit of 10 keys
+        self.assertIsNotNone(self.c.connection)
+        self.redis = RedisConnect().connect()
+
+    def test_pickle(self):
+        payload = ComplexNumber(3,4)
+        self.c.store_pickle("pickle", payload)
+        self.assertEqual(self.c.get_pickle("pickle"), payload)
+
+    def test_decorator(self):
+        self.redis.flushall()
+        mutable = []
+        @cache_it(cache=self.c)
+        def append(n):
+            mutable.append(n)
+            return mutable
+        append(1)
+        len_before = len(mutable)
+        mutable_cached = append(1)
+        len_after = len(mutable)
+        self.assertEqual(len_before, len_after)
+        self.assertNotEqual(id(mutable), id(mutable_cached))
+        self.assertEqual(mutable, mutable_cached)
+
+    def tearDown(self):
+        self.c.flush()
+
